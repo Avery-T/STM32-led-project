@@ -18,14 +18,11 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "math.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include "ir_codes.h"
-#include <math.h>
 #include "arm_math.h"
 
-#define PI 3.14159265358979323846
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -43,6 +40,21 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+#define ARR(WANTED_FREQ) (uint32_t)((F_CLK/WANTED_FREQ)-1)
+#define MAX_LED 60
+#define F_CLK 32000000
+
+typedef struct{
+	uint16_t red;
+	uint16_t green;
+	uint16_t blue;
+}RGB_Value;
+
+typedef struct{
+	RGB_Value buffer[MAX_LED];
+	uint16_t head;
+	uint16_t tail;
+}Circular_Buffer;
 
 /* USER CODE END PM */
 
@@ -59,128 +71,32 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_TIM1_Init(void);
-typedef struct{
-	uint16_t red;
-	uint16_t green;
-	uint16_t blue;
-}RGB_Value;
-
-typedef struct{
-	RGB_Value buffer[60];
-	uint16_t head;
-	uint16_t tail;
-}Circular_Buffer;
-
-
 void TIM2_IRQHandler(void);
 void ADC1_2_IRQHandler(void);
 void Timer2_Init(void);
-void Timer3_Init(void);
 void ADC_init(void);
-void send(Circular_Buffer * rgb_buffer);
+void send_rgb_buffer_to_controller(Circular_Buffer * rgb_buffer);
 void shoot();
 void USART_Init(void);
 void USART_Print(char* message);
-//uint32_t DWT_Delay_Init(void);
-
+void audio_color_vizulaizer(RGB_Value vizulization_color);
 void DWT_Delay_us(uint32_t microseconds);
-#define CALIBRATE(X) (uint32_t) ( (0.0008*X - 0.0276) * 1000000 )
-#define ARR(WANTED_FREQ) (uint32_t)((F_CLK/WANTED_FREQ)-1)
-#define MAX_LED 60
-#define USE_BRIGHTNESS 1
-#define F_CLK 32000000
+void Wait_us(uint32_t);
+void GPIO_Init_Input(void);
+void circular_buffer_init(Circular_Buffer * buffer);
+void circular_buffer_insert_val(Circular_Buffer * buffer, RGB_Value value);
+void send_color_to_led_rgb_controller(RGB_Value rgb_buffer[]);
+void send_rgb_buffer_to_led_rgb_controller( Circular_Buffer * rgb_buffer);
+void print_adc_value_to_usart();
+void set_led_color(uint16_t red, uint16_t green, uint16_t blue,float32_t brightness);
+void audio_vizulaizer(RGB_Value viz_color, float32_t brightness);
+void christmas_lights();
+uint32_t get_ir_remote_key_press();
+void ir_reciever_init();
 
-uint16_t datasentflag = 0;
-
-//uint8_t LED_Data[MAX_LED][4];
-//uint16_t pwmData[ 24*(MAX_LED) + 50]; //+ 50 stores the reset code
-//uint16_t datasentflag = 0;
+volatile uint16_t datasentflag = 0;
 volatile uint8_t ADC_flag = 0;
 volatile uint32_t ADC_Value = 0;
-volatile uint32_t MicroSecond_Counter = 0;
-
-
-void Wait_us(uint32_t);
-
-
-void GPIO_Init_Input(void);
-
-
-double cutoff_frequency = 600;
-double sample_rate = 40000;
-#define BLOCK_SIZE 100
-#define FILTER_ORDER 6
-#define SAMPLING_FREQ 40000.0f  // Replace with your actual sampling frequency
-#define CUTOFF_FREQ 1500.0f    // Replace with your desired cutoff frequency
-#define NUM_STAGES 1  // Butterworth filter has two biquad stages for each pole
-
-float32_t biquadCoeffs[5 * NUM_STAGES];  // Coefficients array
-
-// Function to calculate Butterworth filter coefficients
-arm_biquad_cascade_df2T_instance_f32 S;
-void calculateButterworthCoeffs(void) {
-
-
-    arm_biquad_cascade_df2T_init_f32(&S, FILTER_ORDER, biquadCoeffs, NULL);
-}
-// Function to apply Butterworth filter to input data
-void applyButterworthFilter(float32_t* input, float32_t* output, uint32_t blockSize) {
-    arm_biquad_cascade_df2T_f32(&S, input, output, blockSize);
-}
-void butterworth_lowpass( int order, uint32_t *input, double *output, uint32_t length) {
-    double RC = 1.0 / (cutoff_frequency * 2 * PI);
-    double dt = 1.0 / sample_rate;
-    double alpha = dt / (RC + dt);
-    double beta = (RC - dt) / (RC + dt);
-
-    // Apply the difference equation for a 2nd-order lowpass Butterworth filter repeatedly for the desired order
-    for (int i = 0; i < order; ++i) {
-        double y = 0.0;
-        for (uint32_t j = 0; j < length; ++j) {
-            y = alpha * input[j] +(1-alpha) * y;
-            output[j] = y;
-        }
-        for (size_t j = 0; j < length; ++j) {
-                    input[j] = output[j];
-                }
-    }
-}
-void circular_buffer_init(Circular_Buffer * buffer)
-{
-	buffer->head = 0;
-	buffer->tail = 0;
-}
-
-void circular_buffer_insert_val(Circular_Buffer * buffer, RGB_Value value) {
-	buffer->buffer[buffer->tail] = value;
-	buffer->tail = (buffer->tail + 1) % MAX_LED;
-
-	buffer->buffer[buffer->tail] = value;
-	buffer->tail = (buffer->tail + 1) % MAX_LED;
-	buffer->head = (buffer->head + 1) % MAX_LED;
-
-	  // Check if the buffer is full and update the head accordingly
-	if (buffer->tail == buffer->head)
-	   buffer->head = (buffer->head + 1) % MAX_LED;
-
-
-}
-
-
-
-
-/* USER CODE BEGIN PFP */
-void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
-{
-	HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_1);
-	datasentflag=1;
-}
-volatile uint8_t KEY_PRESSED_FLAG = 0;
-uint32_t get_ir_remote_key_press();
-void send_stationary_color_to_led_rgb_controller(RGB_Value rgb_buffer[]);
-void set_led_color(uint16_t red, uint16_t green, uint16_t blue, double brightness);
-void audio_vizulaizer();
-void christmas_lights();
 
 int main(void)
 {
@@ -192,214 +108,350 @@ int main(void)
   MX_TIM1_Init();
   ADC_init();
   Timer2_Init();
-  // Timer3_Init();
   USART_Init();
+  ir_reciever_init();
 
-  //GPIO_Init_Input();
-
-  //shoot();
-
-
-
-
-  RCC->AHB2ENR |= RCC_AHB2ENR_GPIOCEN;
-  GPIOC->MODER &= ~(GPIO_MODER_MODE0); // Clear the mode bits for the pin also sets as input
-  GPIOC->PUPDR |= 1; // set pupdr as no pull up pull down
-  //GPIOC->MODER |= GPIO_MODER_MODE0_0;
-
+  float32_t brightness = 1.0;
   uint32_t key = 0;
-  char inputed_freq[10] = {0};
-  //USART_Print("hi");
-  double brightness = 1;
-  RGB_Value saved_color = {0,0,0};
+  uint32_t prev_key = 0;
+  uint8_t brightness_changed_flag = 1;
+  uint8_t valid_key_not_found_flag = 1;
+  RGB_Value audio_viz_color = {0,0,0};
+
   while (1)
   {
-	  //KEY_PRESSED_FLAG = 0; //turn the flag off and get the key
-	  key = get_ir_remote_key_press(); //returns if a key is pressed
+	  //prev_key = key;
+	  valid_key_not_found_flag = 1;
+	  key = get_ir_remote_key_press(); //wait
 	  USART_Print("\x1B[2J");//clear screen
-	  USART_Print("\x1B[H");//move the curser to the top
-
-	  KEY_PRESSED_FLAG = 0;
+	  USART_Print("\x1B[H");//move the courser to the top
+	  //if the key is invalid or brightness changes then re call the previous function
+	  while(valid_key_not_found_flag | brightness_changed_flag)
+	  {
+		  valid_key_not_found_flag = 0;
+		  brightness_changed_flag = 0;
+	  HAL_Delay(1);
 	  switch(key)
 	  {
+
 	  	case KEY_0:
 
 	  		 USART_Print("Key0");
-	  		 set_led_color(0,0,0, brightness);
+	  		 set_led_color(0,0,0,brightness);
+
 	  		 break;
 	  	case KEY_1:
+
 	  		set_led_color(255,0,0,brightness);
 
 	  		 USART_Print("Key1");
 	  		 break;
 	  	case KEY_2:
+
 	  		set_led_color(0,255,0,brightness);
 	  		 USART_Print("Key2");
 	  		 break;
 	  	case KEY_3:
+
 	  		set_led_color(0,0,255,brightness);
 	 	  	 USART_Print("Key3");
 	 	  	 break;
-	 	case KEY_4:
-	 		christmas_lights();
-	 		 USART_Print("Key4");
-	 		 break;
-	    case KEY_5:
-	    	 USART_Print("Key5");
-	         break;
-	    case KEY_6:
-	    	USART_Print("Key6");
-	    	break;
-	    case KEY_7:
-	    	USART_Print("Key7");
-	    	break;
-	    case KEY_8:
-	    	USART_Print("Key8");
-	    	break;
-	    case KEY_9:
-	    	USART_Print("Key9");
-	    	break;
+
+	    case KEY_4:
+
+
+	    	 		christmas_lights();
+	    	 		 USART_Print("Key4");
+	    	 		 break;
+	    	 	//removed breaks for unused keys. If you press a unused key it triggers the default case
+	    	    case KEY_5:
+	    	    	valid_key_not_found_flag = 1;
+	    	    	key = prev_key;
+	    	    	 USART_Print("Key5");
+	    	         break;
+	    	    case KEY_6:
+	    	    	valid_key_not_found_flag = 1;
+	    	    	key = prev_key;
+	    	    	USART_Print("Key6");
+	    	    	break;
+	    	    case KEY_7:
+	    	    	valid_key_not_found_flag = 1;
+	    	        key = prev_key;
+	    	    	USART_Print("Key7");
+	    	    	break;
+	    	    case KEY_8:
+	    	    	valid_key_not_found_flag = 1;
+	    	    	key = prev_key;
+	    	    	USART_Print("Key8");
+	    	    	break;
+	    	    case KEY_9:
+	    	    	valid_key_not_found_flag = 1;
+	    	    	key = prev_key;
+	    	    	USART_Print("Key9");
+	    	    	break;
+
 	    case KEY_STAR:
+	    	//for checking and debugging the ADC output
+
+	    	print_adc_value_to_usart();
 	    	USART_Print("Star");
 	    	break;
 	    case KEY_POUND:
+
 	    	USART_Print("POUND");
-	    	break;
-	    case KEY_UP_ARROW:
-	    	USART_Print("UP ARROW");
-	    	if(brightness<1)
-	    		brightness += .1;
+	    	key = prev_key;
 	    	break;
 	    case KEY_RIGHT_ARROW:
+
+	    	audio_viz_color.red = 0;
+	    	audio_viz_color.blue = 0;
+	    	audio_viz_color.green = brightness*255;
+	    	audio_vizulaizer(audio_viz_color,brightness);
 	    	USART_Print("RIGHT ARROW");
 	    	break;
+
+	    case KEY_UP_ARROW:
+	    	brightness_changed_flag =1;
+	    	if(brightness<1){
+	         brightness += .2;
+
+	    	}
+	    	  key = prev_key;
+	    	  USART_Print("UP ARROW");
+	    	  break;
 	    case KEY_DOWN_ARROW:
-	    	if(brightness>0)
-	    		    brightness -= .1;
-	    	USART_Print("DOWN ARROW");
-	    	break;
+	    	brightness_changed_flag = 1;
+	    	 if(brightness>0){
+	    	   brightness -= .2;
+	    	 }
+	    	   key = prev_key; //break out of array and do it
+	    	   USART_Print("DOWN ARROW");
+	    	   break;
+
 	    case KEY_LEFT_ARROW:
+
+	    	audio_viz_color.red = 0;
+	    	audio_viz_color.blue =  brightness*255;
+	    	audio_viz_color.green = 0;
+	    	audio_vizulaizer(audio_viz_color,brightness);
 	    	USART_Print("LEFT ARROW");
 	    	break;
 	    case KEY_MIDDLE_BTN:
-	    	audio_vizulaizer();
+
+	    	audio_viz_color.red = brightness* 255;
+	    	audio_viz_color.blue = 0;
+	    	audio_viz_color.green = 0;
+	    	audio_vizulaizer(audio_viz_color,brightness);
 	    	USART_Print("MIDDLE BTN");
 	    	break;
+	    /*repeat code happens when a user holds down a button
+	      however the HAL delay removes the possibility of a repeat code happening
+	      catching repeat code in case I use it later
+	     */
 	    case KEY_REPEAT:
+
 	    	USART_Print("REPEAT");
 	    	break;
+	    /*
+	     * If the IR receiver is triggered by a random IR signal then make the key the previous key
+	       to recall the previous function
+	     */
+
 	    default:
+	    	valid_key_not_found_flag = 1;
+	    	key = prev_key;
+	    	//key = prev_key; // default to the previous key to rerun the current function
 	    	break;
 	  }
 
-	  HAL_Delay(400);
+	  prev_key = key;
 
-
-	  //return;
-
-
-	  //GPIOC->BSRR |= GPIO_BSRR_BS_0; // reset the gpio pin
-	 // while((GPIOC->IDR & GPIO_IDR_ID0) == 1);
-		//  GPIOC->BSRR |= GPIO_BSRR_BS_0; // reset the gpio pin
-
-
-
-	  //while (HAL_GPIO_ReadPin (GPIOC, GPIO_PIN_0));   // wai
-
-
-
-
-
-
-
+	  HAL_Delay(300);
+    }
 
   }
-
-  }
-
+}
 
 
-void audio_vizulaizer()
+
+/* USER CODE BEGIN */
+void circular_buffer_init(Circular_Buffer * buffer)
+{
+	buffer->head = 0;
+	buffer->tail = 0;
+}
+
+void circular_buffer_insert_val(Circular_Buffer * buffer, RGB_Value value) {
+	buffer->buffer[buffer->tail] = value;
+	buffer->tail = (buffer->tail + 1) % MAX_LED;
+	buffer->buffer[buffer->tail] = value;
+	buffer->tail = (buffer->tail + 1) % MAX_LED;
+	buffer->head = (buffer->head + 1) % MAX_LED;
+	  // Check if the buffer is full and update the head accordingly
+	if (buffer->tail == buffer->head)
+	   buffer->head = (buffer->head + 1) % MAX_LED;
+}
+
+
+/* USER CODE BEGIN PFP */
+void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
+{
+	HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_1);
+	datasentflag=1;
+}
+
+void print_adc_value_to_usart()
+{
+	char message[32] = {0};
+	while((GPIOC->IDR & GPIO_IDR_ID0) == 1)
+		{
+			if(ADC_flag)
+			{
+			 sprintf(message,"%d ",ADC_Value);
+			 USART_Print(message);
+			}
+		}
+
+}
+
+/* this is a empirically written function tested for 60 LEDs if you increase the LEDS 
+ * you will have to tweak the values
+ */
+
+void audio_vizulaizer(RGB_Value color, float32_t brightness)
 {
 
-	calculateButterworthCoeffs();
-	  Circular_Buffer rgb_buffer;
-	  circular_buffer_init(&rgb_buffer);
-	  RGB_Value red = {255,0,0};
-	  RGB_Value blue = {0,0,255};
-	  RGB_Value off = {0,0,0};
+	Circular_Buffer rgb_buffer;
+    circular_buffer_init(&rgb_buffer);
+	RGB_Value off = {0,0,0};
+	float32_t sample[10] = {0}; // using floats added some delay that made the visulizer look better
+	uint16_t sample_index = 0;
+    uint32_t filter = 0;
+    uint32_t sound_detected_flag = 0;
+    //Empirically derived cut off
+    //TODO make the remote control change the cut off
+    uint32_t filter_cut_off = 3900; //3800 for a quite room //4100 for a loud room
 
-
-	 // fill buffer with nothing
+	 // fill buffer with turned off LEDS
 	  for(int i =0; i<=MAX_LED; i++)
 	  {
 	     circular_buffer_insert_val(&rgb_buffer,off);
 	  }
+
 	  //while((GPIOC->IDR & GPIO_IDR_ID0) ==0); // wait for the key to reset state
 	  HAL_Delay(700);
-	  uint32_t num_samples = 10;
-	  float32_t samples[BLOCK_SIZE] = {0};
 
-	  float32_t filter_output[BLOCK_SIZE] = {0};
-	  uint32_t sample_cnt = 0;
-	  char message[33];
-	  while((GPIOC->IDR & GPIO_IDR_ID0)==1) //while a key is not pressed
+	  while((GPIOC->IDR & GPIO_IDR_ID0) == 1) //while a key is not pressed
 	  {
-		 // if((GPIOC->IDR & GPIO_IDR_ID0 )== 0) KEY_PRESSED_FLAG =1;  //if ID0 is zero then its pressed
-		if(ADC_flag)
+		  //reassigning the variable adds some delay
+		  RGB_Value viz_color  =color;
+		  RGB_Value blue = {0,0,255};
+		  RGB_Value off = {0,0,0};
+		  //
+		if(ADC_flag == 1)
 		{
+			ADC_flag = 0;
 
-			samples[sample_cnt] =  (float32_t)ADC_Value;
+			/* 10pt moving average filter to filter out noise */
+				if(sample_index < 10)
 
-			//sprintf( message,"%d ",ADC_Value);
-			//SUSART_Print(message);
-			sample_cnt +=1;
-			if(sample_cnt >=BLOCK_SIZE)
-			{
-				applyButterworthFilter(samples,filter_output,BLOCK_SIZE);
-				//USART_Print("Filter ");
-				for(int i = 0; i<BLOCK_SIZE; i++)
 				{
-
-					sprintf( message,"%ld ",(uint32_t) filter_output[i]);
-					USART_Print(message);
-
-					if(filter_output[i] >9)
-					{
-					circular_buffer_insert_val(&rgb_buffer,red);
-					send(&rgb_buffer);
-					}
-					else
-						circular_buffer_insert_val(&rgb_buffer,off);
-
+					sample[sample_index] = ADC_Value;
+					sample_index++;
 				}
 
-			  sample_cnt = 0;
-			}
+				else if(sample_index == 10)
+				  {
+					 HAL_Delay(2);
+					sample_index = 0;
 
-		 ADC_flag = 0;
+					for(int i = 0; i < 10; i++)
+					{
+						filter += sample[i];
+					}
 
-	  }
-	  else
+					filter = (uint32_t) filter/ 10;
+				  	 	 if(filter > filter_cut_off ){
+				  	 		sound_detected_flag = 1;
+				  	 	 HAL_Delay(1);
+				  	 	 /* if the output of the filter is above the cut off then add led color to the buffer */
+				  	 	 /*  if the value is above the filter cut of then add the difference to the color blue */
+				  	 	 /* increase the amount of LEDs displayed if the filtered signal goes above the cut off */
+				  	 	 	 viz_color.blue = brightness*(filter - filter_cut_off); //3800 quite room
+
+							  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  if(viz_color.blue > 5){
+							  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  }
+							  if(viz_color.blue > 10){
+							  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  }
+							  if(viz_color.blue > 15){
+							  	  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  	  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  	  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  }
+							  if(viz_color.blue > 20)
+		 	 	 	 	 	 	  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  	  circular_buffer_insert_val(&rgb_buffer,viz_color);
+							  	  circular_buffer_insert_val(&rgb_buffer,viz_color);
+								  circular_buffer_insert_val(&rgb_buffer,viz_color);
+
+					 			}
+							else
+								circular_buffer_insert_val(&rgb_buffer,off);
+				  }
+
+	  else{
+		  //if it did not detect anything add a led with its color of 0 0 0 to the begging of the buffer to push the color down the strip
+		  HAL_Delay(1);
 		 circular_buffer_insert_val(&rgb_buffer,off);
+	  }
 
 
+	  //writes the new led colors to the begging of the strip that pushes the previous colors down the strip
+	  send_rgb_buffer_to_led_rgb_controller(&rgb_buffer);
+	  /*
+	   * If a desired sound was detected then add more LEDs to the start of the led strip
+	   * this is done because there was HAL delay and delay from sending the previous LEDs
+	   * during the delay you can not detect a new sound so this code fakes a sound detection by re-sending LEDs
+	   * this hides the blocking delay making the LEDs look more real-time
+	   * the amount of LEDs I'm re-sending was empirically found, setting 5 LEDs to the same color looked the best
+	   */
+	  if(sound_detected_flag)
+	  {
+	   circular_buffer_insert_val(&rgb_buffer,viz_color);
+	   circular_buffer_insert_val(&rgb_buffer,viz_color);
+	   circular_buffer_insert_val(&rgb_buffer,viz_color);
+	   circular_buffer_insert_val(&rgb_buffer,viz_color);
+	   circular_buffer_insert_val(&rgb_buffer,viz_color);
+	   sound_detected_flag = 0;
+	  }
 
-	  HAL_Delay(1);
-	  send(&rgb_buffer);
+	  //sends the new LEDs if the flag was high
+	  //also sends nothing if it was low, this adds some delay that made the visualizer look better
+	  send_rgb_buffer_to_led_rgb_controller(&rgb_buffer);
+
+	  //Empirically derived
+	  HAL_Delay(4);
+	  //insert nothing at the end, If you do not do this the LEDs wont stream continuously
 	  circular_buffer_insert_val(&rgb_buffer,off);
-
-
 	 }
+  }
+}
 
-
-   }
 
 void christmas_lights()
 {
-	RGB_Value led[60];
-	for(int i = 0; i<MAX_LED; i=i+2)
+	RGB_Value led[MAX_LED];
+	for(int i = 0; i<MAX_LED; i=i+4)
 	{
+		//red
 		led[i].red =  255;
 		led[i].blue = 0;
 		led[i].green =0;
@@ -408,50 +460,52 @@ void christmas_lights()
 		led[i+1].red =  0;
 		led[i+1].blue = 0;
 		led[i+1].green =255;
-
 		//orange
-		//led[i+2].green = 165;
-		//led[i+2].red =  255;
-		//led[i+2].blue = 0;
-		//led[i+2].green =0;
+		led[i+2].green = 165;
+		led[i+2].red =  255;
+		led[i+2].blue = 0;
+		led[i+2].green =0;
 		//blue
-		//led[i+3].green = 0;
-		//led[i+3].red =  0;
-		//led[i+3].blue = 255;
+		led[i+3].green = 0;
+		led[i+3].red =  0;
+		led[i+3].blue = 255;
 	}
-		send_stationary_color_to_led_rgb_controller(led);
+		send_color_to_led_rgb_controller(led);
 
 }
 
-void set_led_color(uint16_t red, uint16_t green, uint16_t blue, double brightness)
+void set_led_color(uint16_t red, uint16_t green, uint16_t blue,float32_t brightness)
 {
-	RGB_Value led[60];
-	for(int i = 0; i<MAX_LED; i++)
-	{
-		led[i].red =  red * brightness;
-		led[i].blue = blue * brightness;
-		led[i].green = green * brightness;
-	}
-	send_stationary_color_to_led_rgb_controller(led);
+	//sets all the LEDs in a strip to a inputed color
+		RGB_Value led[MAX_LED];
+
+		for(int i = 0; i<MAX_LED; i++)
+		{
+			led[i].red =  red * brightness;
+			led[i].blue = blue * brightness;
+			led[i].green = green * brightness;
+		}
+
+	send_color_to_led_rgb_controller(led);
+
 }
 
+void ir_reciever_init()
+{
+  RCC->AHB2ENR |= RCC_AHB2ENR_GPIOCEN;
+  GPIOC->MODER &= ~(GPIO_MODER_MODE0); // Clear the mode bits for the pin also sets as input
+  GPIOC->PUPDR |= 1; // set pupdr as no pull up pull down
+}
+//blocking function
 uint32_t get_ir_remote_key_press()
 {
-	 //USART_Print("hi");
-		 uint32_t data = 0;
+
+		 uint32_t key_code_in_hex = 0;
 		 uint8_t count = 0;
-		  while((GPIOC->IDR & GPIO_IDR_ID0) == 1);
-		 // wait for the pin to go low 9.1 ms low
-		 // USART_Print("2o2 ");
-
-		  //GPIOC->BSRR |= GPIO_BSRR_BS_0; // reset the gpio pin
-
+		  while((GPIOC->IDR & GPIO_IDR_ID0) == 1); // wait for the pin to go low 9.1 ms low
 		  while((GPIOC->IDR & GPIO_IDR_ID0) ==0); // wait for the pin to high
-			 // USART_Print("2o2 ");
-		  //this is the start of the data frame
+		  //Start of the Data frame, 32 bits of data is receivied in this frame
 		  while((GPIOC->IDR & GPIO_IDR_ID0) == 1); // wait for the pin to go low agian // high for 4.5ms
-		  //USART_Print("2o2 ");
-
 		  for(int i = 0; i<32; i++ )
 		  {
 			  count = 0;
@@ -461,16 +515,16 @@ uint32_t get_ir_remote_key_press()
 
 				  if(count ==2)
 				  {
-					  data |= 1 << (31-i);
+					  key_code_in_hex |= 1 << (31-i);
 					  //while((GPIOC->IDR & GPIO_IDR_ID0) ==1); //make sure its done
 				  }
 				  if(count == 1){
-					  data &= ~(1<<(31-i)); //asumes its a zero
+					  key_code_in_hex &= ~(1<<(31-i)); //asumes its a zero
 					  DWT_Delay_us(700); //if where still high after 100 ms then continue counting
 				  }
 			  }
 		  }
-		  return data;
+		  return key_code_in_hex;
 }
 
 
@@ -479,30 +533,19 @@ void DWT_Delay_us(uint32_t microseconds) {
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-
     // Calculate the number of cycles for the requested delay
     uint32_t cycles = microseconds * (F_CLK / 1000000);
-    /* 3 NO OPERATION instructions */
-    //    __ASM volatile ("NOP");
-    //   __ASM volatile ("NOP");
-    // __ASM volatile ("NOP");
-
     // Wait until the required number of cycles has passed
    while (DWT->CYCCNT < cycles) {
         // Do nothing, just wait
     }
 }
 
-//void GPIO_init
-/* USER CODE BEGIN */
 
-
-void send_stationary_color_to_led_rgb_controller(RGB_Value rgb_buffer[])
+void send_color_to_led_rgb_controller(RGB_Value rgb_buffer[])
 {
 
-	uint8_t LED_Data[MAX_LED][4];
 	uint16_t pwmData[ 24*(MAX_LED) + 50]; //+ 50 stores the reset code
-
 	uint32_t indx=0;
     uint32_t color=0;
 
@@ -530,17 +573,13 @@ void send_stationary_color_to_led_rgb_controller(RGB_Value rgb_buffer[])
 				pwmData[indx] = 0;
 				indx++;
 			}
-
 			HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t *)pwmData, indx);
 			while (!datasentflag){};
 			datasentflag = 0;
 }
 
-
-
-void send( Circular_Buffer * rgb_buffer)
+void send_rgb_buffer_to_led_rgb_controller( Circular_Buffer * rgb_buffer)
 {
-	uint8_t LED_Data[MAX_LED][4];
 	uint16_t pwmData[ 24*(MAX_LED) + 50]; //+ 50 stores the reset code
 	//uint16_t datasentflag = 0;
 
@@ -588,10 +627,7 @@ void send( Circular_Buffer * rgb_buffer)
 void TIM2_IRQHandler(void) {
 
        TIM2->SR &= ~TIM_SR_UIF; // Clear the update interrupt flag
-       //KEY_PRESSED_FLAG = 0;
-
        ADC1->CR |= ADC_CR_ADSTART; //call the ADC in the TIMER to controll the sampeling
-//        	ADC_flag =0;
 }
 
 
@@ -599,15 +635,8 @@ void ADC1_2_IRQHandler()
 {
 	if(ADC1->ISR & ADC_ISR_EOC)
 	{
-		//enqueue(sample_buffer, ADC1->DR);
 		ADC_Value = ADC1->DR; //ADC_Value
 		ADC_flag = 1;
-
-		//ADC_flag = 1;
-		//if(prev_sample > curr_sample)
-
-		//   GPIOC->ODR ^= GPIO_PIN_0;
-
 	}
 }
 
@@ -616,51 +645,16 @@ void Timer2_Init() {
     // Enable the peripheral clock for TIM2
 	RCC->AHB2ENR  |= RCC_AHB2ENR_GPIOCEN;
     RCC->APB1ENR1 |= RCC_APB1ENR1_TIM2EN;
-    // Configure the GPIO pin for PWM output (change these values for your specific pin)
     GPIOC->MODER &= ~(GPIO_MODER_MODE0); // Clear the mode bits for the pin
     GPIOC->MODER |= GPIO_MODER_MODE0_0;
-    // Configure TIM2 as PWM mode
-    //TIM2->PSC = 1;
-    TIM2->ARR =  ARR(40000);
+    TIM2->ARR =  ARR(80000);
     TIM2->DIER |= TIM_DIER_UIE; //flag for arr overflow inturupt
-
-     //TIM2->DIER |= TIM_DIER_CC1IE; //intrupt enable othher thing is intrupt flag
     NVIC_SetPriority(TIM2_IRQn, 0); // Set priority (adjust as needed)
     NVIC_EnableIRQ(TIM2_IRQn); // Enable the interrupt    // Set the PWM period (ARR register)
-    // Set the initial PWM duty cycle (CCR1 register)
-    //TIM2->PSC = 0;
-    //TIM2->CCR1 = 399; // For a 50% duty cycle, assuming a 1 kHz PWM frequency
+
     TIM2->CR1 |= TIM_CR1_CEN;
 }
 
-
-void TIM3_IRQHandler(void) {
-        // Clear the update interrupt flag
-       TIM3->SR &= ~TIM_SR_UIF;
-       MicroSecond_Counter += 1;
-
-}
-//timer 3 interrupts at 1 us
-void Timer3_Init() {
-
-    // Enable the peripheral clock for TIM2
-	RCC->AHB2ENR  |= RCC_AHB2ENR_GPIOCEN;
-    RCC->APB1ENR1 |= RCC_APB1ENR1_TIM3EN;
-    // Configure the GPIO pin for PWM output (change these values for your specific pin)
-    GPIOC->MODER &= ~(GPIO_MODER_MODE0); // Clear the mode bits for the pin
-    GPIOC->MODER |= GPIO_MODER_MODE0_0;
-    // Configure TIM2 as PWM mode
-    //TIM2->PSC = 1;
-    TIM3->ARR =  ARR(100000000); // 1 us
-
-    TIM3->DIER |= TIM_DIER_UIE; //flag for arr overflow inturupt
-
-     //TIM2->DIER |= TIM_DIER_CC1IE; //intrupt enable othher thing is intrupt flag
-    NVIC_SetPriority(TIM3_IRQn, 0); // Set priority (adjust as needed)
-    NVIC_EnableIRQ(TIM3_IRQn); // Enable the interrupt    // Set the PWM period (ARR register)
-
-    //TIM3->CR1 |= TIM_CR1_CEN;
-}
 void USART_Print( char * message ) {
 	uint8_t i;
 	for(i=0; message[i] != 0; i++){				// check for terminating NULL character
@@ -721,7 +715,6 @@ void USART_Init()
 
 	  // configure GPIO pins for USART2 (PA2, PA3) follow order of configuring registers
 	  // AFR, OTYPER, PUPDR, OSPEEDR, MODDER otherwise a glitch is created on the output pin
-	  //RCC->AHB2ENR |= (RCC_AHB2ENR_GPIOAEN);
 	  GPIOA->AFR[0] &= ~(GPIO_AFRL_AFSEL2 | GPIO_AFRL_AFSEL3);		// mask AF selection
 	  GPIOA->AFR[0] |= ((7 << GPIO_AFRL_AFSEL2_Pos ) |				// select USART2 (AF7)
 	  		  	  	   (7 << GPIO_AFRL_AFSEL3_Pos)); 		  	  	// for PA2 and PA3
